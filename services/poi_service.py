@@ -1,6 +1,13 @@
 # POI Service — Firebase Firestore
-# Queries cities/{city}/places with package + budget constraints.
-# Firestore does hard filtering; Python handles soft filters.
+# FIX: Firestore composite index error.
+# Root cause: querying on category_primary + entry_fee + rating simultaneously
+#             requires a composite index that may not exist yet.
+# Solution:   Query ONLY on category_primary (single-field, auto-indexed).
+#             Apply ALL other filters (entry_fee, rating, tags, wheelchair)
+#             in Python after fetching documents.
+#
+# To create the composite index properly, click the link in the error log
+# or run: firebase deploy --only firestore:indexes
 
 from config import db, BUDGET_BANDS
 from data.packages import PACKAGES
@@ -47,26 +54,25 @@ def filter_pois(
     """
     Query Firestore for POIs matching package + budget constraints.
 
-    Firestore filters (indexed):
-      - category_primary IN [...]
-      - entry_fee <= max_entry_fee
-      - rating >= min_rating
+    Firestore query (single field only — no composite index needed):
+      - category_primary IN [...]   ← only indexed field used
 
-    Python filters (soft):
-      - tag matching
+    Python filters (all other conditions applied after fetch):
+      - entry_fee  <= max_entry_fee
+      - rating     >= min_rating
+      - tags       (soft match, at least one tag)
       - wheelchair accessibility
-      - poi exclusion list
+      - excluded POI ids
     """
     ref = _get_places_ref(city)
 
-    # Firestore compound query
+    # ── Single-field Firestore query (no composite index needed) ──────────────
+    # Firestore auto-indexes every field individually.
+    # We only filter on category_primary here to avoid composite index errors.
     query = (
         ref
         .where(filter=FieldFilter("category_primary", "in", config["category_primary"]))
-        .where(filter=FieldFilter("entry_fee", "<=", float(config["max_entry_fee"])))
-        .where(filter=FieldFilter("rating", ">=", float(config["min_rating"])))
-        .order_by("rating", direction="DESCENDING")
-        .limit(30)
+        .limit(100)   # fetch up to 100 candidates, then Python filters down
     )
 
     docs = query.stream()
@@ -76,15 +82,31 @@ def filter_pois(
         poi           = doc.to_dict()
         poi["poi_id"] = doc.id
 
+        # ── Python-side filters (no index required) ──────────────────────────
+
         # Skip excluded POIs
         if poi["poi_id"] in excluded:
             continue
+
+        # Entry fee filter
+        try:
+            if float(poi.get("entry_fee", 0)) > float(config["max_entry_fee"]):
+                continue
+        except (TypeError, ValueError):
+            pass
+
+        # Rating filter
+        try:
+            if float(poi.get("rating", 0)) < float(config.get("min_rating", 4.0)):
+                continue
+        except (TypeError, ValueError):
+            pass
 
         # Wheelchair filter
         if config.get("wheelchair_only") and not poi.get("wheelchair_accessible"):
             continue
 
-        # Tag soft filter (at least one package tag present)
+        # Tag soft filter (at least one package tag must appear in POI tags)
         if config.get("tags"):
             poi_tags = str(poi.get("tags", ""))
             if not any(tag in poi_tags for tag in config["tags"]):
@@ -92,7 +114,7 @@ def filter_pois(
 
         pois.append(poi)
 
-    # Re-sort by popularity_score + rating
+    # Sort by popularity_score DESC, rating DESC
     pois.sort(key=lambda p: (
         -float(p.get("popularity_score", 0)),
         -float(p.get("rating", 0))
