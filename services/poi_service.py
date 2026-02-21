@@ -1,13 +1,6 @@
 # POI Service — Firebase Firestore
-# FIX: Firestore composite index error.
-# Root cause: querying on category_primary + entry_fee + rating simultaneously
-#             requires a composite index that may not exist yet.
-# Solution:   Query ONLY on category_primary (single-field, auto-indexed).
-#             Apply ALL other filters (entry_fee, rating, tags, wheelchair)
-#             in Python after fetching documents.
-#
-# To create the composite index properly, click the link in the error log
-# or run: firebase deploy --only firestore:indexes
+# FIX 1: Simplified Firestore query (single field) to avoid composite index errors.
+# FIX 2: tags stored as Firestore ARRAY — use proper list membership check.
 
 from config import db, BUDGET_BANDS
 from data.packages import PACKAGES
@@ -18,6 +11,18 @@ from typing import Dict, List
 def _get_places_ref(city: str = "Chennai"):
     """Return Firestore reference to cities/{city}/places."""
     return db.collection("cities").document(city).collection("places")
+
+
+def _to_list(value) -> List[str]:
+    """
+    Normalise a Firestore field to a Python list.
+    Handles: Firestore array (list), comma-string, None.
+    """
+    if not value:
+        return []
+    if isinstance(value, list):
+        return [str(v).strip() for v in value]
+    return [s.strip() for s in str(value).split(",") if s.strip()]
 
 
 def resolve_config(package_id: str, budget_band: str, overrides: dict) -> dict:
@@ -54,25 +59,22 @@ def filter_pois(
     """
     Query Firestore for POIs matching package + budget constraints.
 
-    Firestore query (single field only — no composite index needed):
-      - category_primary IN [...]   ← only indexed field used
+    Firestore query (single field — no composite index needed):
+      - category_primary IN [...]
 
-    Python filters (all other conditions applied after fetch):
+    Python filters (applied after fetch):
       - entry_fee  <= max_entry_fee
       - rating     >= min_rating
-      - tags       (soft match, at least one tag)
+      - tags       (list intersection check)
       - wheelchair accessibility
       - excluded POI ids
     """
     ref = _get_places_ref(city)
 
-    # ── Single-field Firestore query (no composite index needed) ──────────────
-    # Firestore auto-indexes every field individually.
-    # We only filter on category_primary here to avoid composite index errors.
     query = (
         ref
         .where(filter=FieldFilter("category_primary", "in", config["category_primary"]))
-        .limit(100)   # fetch up to 100 candidates, then Python filters down
+        .limit(100)
     )
 
     docs = query.stream()
@@ -82,42 +84,40 @@ def filter_pois(
         poi           = doc.to_dict()
         poi["poi_id"] = doc.id
 
-        # ── Python-side filters (no index required) ──────────────────────────
-
-        # Skip excluded POIs
+        # Skip excluded
         if poi["poi_id"] in excluded:
             continue
 
-        # Entry fee filter
+        # Entry fee
         try:
-            if float(poi.get("entry_fee", 0)) > float(config["max_entry_fee"]):
+            if float(poi.get("entry_fee", 0) or 0) > float(config["max_entry_fee"]):
                 continue
         except (TypeError, ValueError):
             pass
 
-        # Rating filter
+        # Rating
         try:
-            if float(poi.get("rating", 0)) < float(config.get("min_rating", 4.0)):
+            if float(poi.get("rating", 0) or 0) < float(config.get("min_rating", 4.0)):
                 continue
         except (TypeError, ValueError):
             pass
 
-        # Wheelchair filter
+        # Wheelchair
         if config.get("wheelchair_only") and not poi.get("wheelchair_accessible"):
             continue
 
-        # Tag soft filter (at least one package tag must appear in POI tags)
+        # ── FIX: tags is a Firestore ARRAY — use list intersection ─────────────
         if config.get("tags"):
-            poi_tags = str(poi.get("tags", ""))
+            poi_tags = _to_list(poi.get("tags", []))
             if not any(tag in poi_tags for tag in config["tags"]):
                 continue
 
         pois.append(poi)
 
-    # Sort by popularity_score DESC, rating DESC
+    # Sort: popularity_score DESC, rating DESC
     pois.sort(key=lambda p: (
-        -float(p.get("popularity_score", 0)),
-        -float(p.get("rating", 0))
+        -float(p.get("popularity_score", 0) or 0),
+        -float(p.get("rating", 0) or 0)
     ))
 
     return pois

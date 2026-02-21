@@ -1,9 +1,12 @@
 # Scheduler — builds concrete time slots for each day
 # Uses ORS-optimized route order, then assigns arrival/departure
 # times respecting day window, POI duration, and pace limits.
+#
+# FIX: Firestore stores activities, best_time_to_visit, tags as ARRAYS.
+#      All helpers now accept both list and string gracefully.
 
 from datetime import datetime, timedelta
-from typing import List, Dict
+from typing import List, Dict, Union
 from models.schemas import TimeSlot, DaySchedule, DayConstraint
 from services.ors_service import optimize_route_greedy, haversine
 from config import TRANSPORT_RATES, TRANSPORT_SPEED, ACTIVITY_EXTRAS
@@ -19,6 +22,31 @@ def _fmt(dt: datetime) -> str:
     return dt.strftime("%H:%M")
 
 
+def _to_list(value) -> List[str]:
+    """
+    Normalise a Firestore field to a clean Python list.
+    Handles: list, comma-string, None, empty.
+    """
+    if not value:
+        return []
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    # comma-separated string fallback
+    return [s.strip() for s in str(value).split(",") if s.strip()]
+
+
+def _to_str(value) -> str:
+    """
+    Normalise a Firestore field to a plain string.
+    Handles: list → 'a, b, c', string → as-is, None → ''
+    """
+    if not value:
+        return ""
+    if isinstance(value, list):
+        return ", ".join(str(v) for v in value)
+    return str(value)
+
+
 def transport_cost(dist_km: float, mode: str) -> float:
     r = TRANSPORT_RATES.get(mode, TRANSPORT_RATES["auto"])
     return round(r["base"] + r["per_km"] * dist_km, 2)
@@ -29,17 +57,21 @@ def travel_mins(dist_km: float, mode: str) -> int:
     return max(5, int((dist_km / speed) * 60))
 
 
-def activity_extra_cost(acts_str: str) -> float:
-    acts = [a.strip() for a in str(acts_str).split(",")]
+def activity_extra_cost(activities) -> float:
+    """
+    Calculate extra activity costs.
+    Accepts both list (Firestore) and comma-string (legacy).
+    """
+    acts = _to_list(activities)
     return sum(ACTIVITY_EXTRAS.get(a, 0) for a in acts)
 
 
 def schedule_day(
-    pois:          List[Dict],
-    dc:            DayConstraint,
+    pois:           List[Dict],
+    dc:             DayConstraint,
     transport_mode: str,
-    hotel_lat:     float,
-    hotel_lon:     float
+    hotel_lat:      float,
+    hotel_lon:      float
 ) -> DaySchedule:
     """
     Build a DaySchedule from a filtered+ordered list of POIs.
@@ -71,9 +103,15 @@ def schedule_day(
         dist   = haversine(prev_lat, prev_lon, poi["lat"], poi["lon"])
         t_mins = travel_mins(dist, effective_mode)
         t_cost = transport_cost(dist, effective_mode)
-        fee    = float(poi.get("entry_fee", 0))
-        ext    = activity_extra_cost(poi.get("activities", ""))
-        dur    = int(poi.get("duration_minutes", 60))
+        fee    = float(poi.get("entry_fee", 0) or 0)
+        dur    = int(poi.get("duration_minutes", 60) or 60)
+
+        # ── FIX: activities is an array in Firestore ────────────────────────
+        activities_list = _to_list(poi.get("activities", []))
+        ext             = activity_extra_cost(activities_list)
+
+        # ── FIX: best_time_to_visit is an array in Firestore ────────────────
+        best_time_str = _to_str(poi.get("best_time_to_visit", ""))
 
         arrive = cur_time + timedelta(minutes=t_mins)
         depart = arrive + timedelta(minutes=dur)
@@ -83,30 +121,30 @@ def schedule_day(
             break
 
         slots.append(TimeSlot(
-            poi_id=poi["poi_id"],
-            name=poi["name"],
-            start_time=_fmt(arrive),
-            end_time=_fmt(depart),
-            duration_mins=dur,
-            travel_from_prev_mins=t_mins,
-            travel_from_prev_cost=t_cost,
-            entry_fee=fee,
-            activity_extras=ext,
-            slot_total=round(fee + t_cost + ext, 2),
-            lat=poi["lat"],
-            lon=poi["lon"],
-            address=poi.get("address", ""),
-            activities=[a.strip() for a in str(poi.get("activities", "")).split(",")],
-            rating=float(poi.get("rating", 0)),
-            best_time=poi.get("best_time_to_visit", "")
+            poi_id                = poi["poi_id"],
+            name                  = poi["name"],
+            start_time            = _fmt(arrive),
+            end_time              = _fmt(depart),
+            duration_mins         = dur,
+            travel_from_prev_mins = t_mins,
+            travel_from_prev_cost = t_cost,
+            entry_fee             = fee,
+            activity_extras       = ext,
+            slot_total            = round(fee + t_cost + ext, 2),
+            lat                   = float(poi["lat"]),
+            lon                   = float(poi["lon"]),
+            address               = poi.get("address", ""),
+            activities            = activities_list,   # ✔ proper list
+            rating                = float(poi.get("rating", 0) or 0),
+            best_time             = best_time_str      # ✔ always a string
         ))
 
-        day_entry     += fee
-        day_transport += t_cost
-        day_extras    += ext
+        day_entry       += fee
+        day_transport   += t_cost
+        day_extras      += ext
         total_mins_used += t_mins + dur
-        cur_time       = depart
-        prev_lat, prev_lon = poi["lat"], poi["lon"]
+        cur_time         = depart
+        prev_lat, prev_lon = float(poi["lat"]), float(poi["lon"])
 
     # Return to hotel
     ret_dist        = haversine(prev_lat, prev_lon, hotel_lat, hotel_lon)
@@ -123,10 +161,10 @@ def schedule_day(
         total_mins=total_mins_used,
         free_mins=max(0, available_mins - total_mins_used),
         cost_breakdown={
-            "entry":             round(day_entry, 2),
-            "transport":         round(day_transport, 2),
-            "extras":            round(day_extras, 2),
-            "return_transport":  round(ret_cost, 2),
-            "total":             round(day_entry + day_transport + day_extras, 2)
+            "entry":            round(day_entry, 2),
+            "transport":        round(day_transport, 2),
+            "extras":           round(day_extras, 2),
+            "return_transport": round(ret_cost, 2),
+            "total":            round(day_entry + day_transport + day_extras, 2)
         }
     )
