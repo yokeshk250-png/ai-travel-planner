@@ -1,0 +1,24 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "places",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "category_primary", "order": "ASCENDING" },
+        { "fieldPath": "entry_fee",        "order": "ASCENDING" },
+        { "fieldPath": "rating",           "order": "DESCENDING" },
+        { "fieldPath": "popularity_score", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "places",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "category_primary",    "order": "ASCENDING" },
+        { "fieldPath": "wheelchair_accessible", "order": "ASCENDING" },
+        { "fieldPath": "rating",              "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
