@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from routers import packages, planner
 
 app = FastAPI(
@@ -18,10 +19,15 @@ app.add_middleware(
 app.include_router(packages.router)
 app.include_router(planner.router)
 
+# Serve test UI at http://localhost:8000/ui/
+app.mount("/ui", StaticFiles(directory="static", html=True), name="ui")
+
+
 @app.get("/")
 def root():
     return {
         "status":  "ok",
         "message": "AI Travel Planner API is running",
-        "docs":    "/docs"
+        "docs":    "/docs",
+        "ui":      "/ui"
     }

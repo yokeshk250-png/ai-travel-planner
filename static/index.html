@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>AI Travel Planner — Test UI</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, Arial, sans-serif;
+      margin: 0; padding: 20px;
+      background: #f0f4ff;
+      color: #1a1a2e;
+      max-width: 1000px;
+      margin: 0 auto;
+    }
+    h2 { color: #1a237e; margin-bottom: 4px; }
+    h3 { margin: 0 0 10px; font-size: 15px; color: #283593; }
+    .card {
+      background: #fff;
+      border: 1px solid #c5cae9;
+      border-radius: 12px;
+      padding: 16px;
+      margin: 14px 0;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+    }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+    .col { display: flex; flex-direction: column; gap: 4px; }
+    label { font-size: 12px; font-weight: 600; color: #5c6bc0; text-transform: uppercase; }
+    input, select, textarea {
+      padding: 8px 10px;
+      border: 1px solid #c5cae9;
+      border-radius: 8px;
+      font-size: 14px;
+      outline: none;
+      background: #f8f9ff;
+      min-width: 140px;
+    }
+    input:focus, select:focus, textarea:focus {
+      border-color: #3f51b5;
+      background: #fff;
+    }
+    textarea { width: 100%; min-height: 80px; resize: vertical; }
+    button {
+      padding: 9px 18px;
+      background: #3f51b5;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    button:hover { background: #303f9f; }
+    button.secondary {
+      background: #7986cb;
+    }
+    button.secondary:hover { background: #5c6bc0; }
+    #out {
+      background: #0d1117;
+      color: #c9d1d9;
+      padding: 16px;
+      border-radius: 10px;
+      font-size: 13px;
+      overflow: auto;
+      max-height: 500px;
+      white-space: pre;
+      font-family: 'Fira Mono', 'Consolas', monospace;
+    }
+    .badge {
+      display: inline-block;
+      background: #e8eaf6;
+      color: #3f51b5;
+      border-radius: 6px;
+      padding: 2px 8px;
+      font-size: 12px;
+      margin-right: 4px;
+    }
+    #statusBar {
+      font-size: 13px;
+      padding: 6px 10px;
+      border-radius: 8px;
+      margin-top: 8px;
+      display: none;
+    }
+    #statusBar.loading { background: #fff8e1; color: #f57f17; display: block; }
+    #statusBar.ok  { background: #e8f5e9; color: #2e7d32; display: block; }
+    #statusBar.err { background: #ffebee; color: #c62828; display: block; }
+    .tabs { display: flex; gap: 8px; margin-bottom: 10px; }
+    .tab { padding: 7px 16px; border-radius: 8px; cursor: pointer; font-size: 14px; border: 1px solid #c5cae9; background: #f0f4ff; }
+    .tab.active { background: #3f51b5; color: #fff; border-color: #3f51b5; }
+    .tabPane { display: none; }
+    .tabPane.active { display: block; }
+  </style>
+</head>
+<body>
+  <h2>🗺️ AI Travel Planner — Test UI</h2>
+  <p style="color:#666;font-size:13px;margin-top:2px">
+    Connected to <code id="apiBase"></code> |
+    <a href="/docs" target="_blank">Swagger Docs ↗</a>
+  </p>
+
+  <!-- Packages loader -->
+  <div class="card">
+    <div class="row" style="align-items:center;justify-content:space-between">
+      <h3>📦 Packages</h3>
+      <button class="secondary" id="btnLoadPkgs">Reload packages</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <div class="col">
+        <label>Select package</label>
+        <select id="packageSelect" style="min-width:260px"></select>
+      </div>
+      <div id="pkgBadges" style="padding-bottom:6px"></div>
+    </div>
+  </div>
+
+  <!-- Tabs: Structured | Chat -->
+  <div class="card">
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('structured')">📋 Structured plan</div>
+      <div class="tab" onclick="switchTab('chat')">💬 Chat plan (LLM)</div>
+    </div>
+
+    <!-- Structured tab -->
+    <div id="tab-structured" class="tabPane active">
+      <div class="row">
+        <div class="col">
+          <label>City</label>
+          <input id="city" value="Chennai" />
+        </div>
+        <div class="col">
+          <label>Num days</label>
+          <input id="numDays" type="number" min="1" max="7" value="2" style="min-width:80px" />
+        </div>
+        <div class="col">
+          <label>Budget band</label>
+          <select id="budgetBand">
+            <option value="budget">💰 budget</option>
+            <option value="economy" selected>⚖️ economy</option>
+            <option value="premium">⭐ premium</option>
+          </select>
+        </div>
+        <div class="col">
+          <label>Transport override</label>
+          <select id="transportMode">
+            <option value="">(package default)</option>
+            <option value="bus">🚌 bus</option>
+            <option value="metro">🚇 metro</option>
+            <option value="auto">🛺 auto</option>
+            <option value="cab">🚖 cab</option>
+            <option value="self_drive">🚗 self_drive</option>
+          </select>
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <div class="col">
+          <label>Hotel lat</label>
+          <input id="hotelLat" type="number" step="0.0001" value="13.0827" style="min-width:130px" />
+        </div>
+        <div class="col">
+          <label>Hotel lon</label>
+          <input id="hotelLon" type="number" step="0.0001" value="80.2707" style="min-width:130px" />
+        </div>
+        <div class="col">
+          <label>Wheelchair only</label>
+          <select id="wheelchairOnly">
+            <option value="">No</option>
+            <option value="true">Yes</option>
+          </select>
+        </div>
+        <div class="col">
+          <label>Max entry fee (₹)</label>
+          <input id="maxEntryFee" type="number" placeholder="(package default)" style="min-width:130px" />
+        </div>
+      </div>
+
+      <!-- Day constraints -->
+      <div style="margin-top:14px">
+        <h3>📅 Day constraints <span style="font-weight:400;font-size:12px;color:#888">(optional — auto-filled from package if blank)</span></h3>
+        <div id="dayConstraintsContainer"></div>
+        <button class="secondary" id="btnAddDay" style="margin-top:6px;font-size:13px;padding:6px 12px">+ Add day constraint</button>
+      </div>
+
+      <div style="margin-top:14px">
+        <button id="btnGenerate">Generate plan</button>
+      </div>
+    </div>
+
+    <!-- Chat tab -->
+    <div id="tab-chat" class="tabPane">
+      <div class="col">
+        <label>Natural language message</label>
+        <textarea id="chatMsg">Plan 2 days in Chennai, economy budget, beach and heritage, start at 9AM end at 7PM</textarea>
+      </div>
+      <div style="margin-top:10px">
+        <button id="btnChat">Send to LLM</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Status -->
+  <div id="statusBar"></div>
+
+  <!-- Response -->
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <h3>📤 Response</h3>
+      <button class="secondary" onclick="document.getElementById('out').textContent='{}'" style="font-size:12px;padding:4px 10px">Clear</button>
+    </div>
+    <pre id="out">{}</pre>
+  </div>
+
+<script>
+  const API_BASE = window.location.origin;
+  document.getElementById("apiBase").textContent = API_BASE;
+
+  // ── Tabs ─────────────────────────────────────────────────────
+  function switchTab(name) {
+    document.querySelectorAll('.tab').forEach((t, i) => {
+      const names = ['structured','chat'];
+      t.classList.toggle('active', names[i] === name);
+    });
+    document.querySelectorAll('.tabPane').forEach(p => {
+      p.classList.toggle('active', p.id === 'tab-' + name);
+    });
+  }
+
+  // ── Status bar ───────────────────────────────────────────────
+  function setStatus(msg, type='loading') {
+    const el = document.getElementById('statusBar');
+    el.textContent = msg;
+    el.className = type;
+  }
+
+  // ── Output ───────────────────────────────────────────────────
+  function out(obj) {
+    document.getElementById('out').textContent =
+      typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
+  }
+
+  // ── HTTP helper ──────────────────────────────────────────────
+  async function httpJson(path, method='GET', body=null) {
+    const opts = { method, headers: {'Content-Type':'application/json'} };
+    if (body) opts.body = JSON.stringify(body);
+    const res  = await fetch(`${API_BASE}${path}`, opts);
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = text; }
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${JSON.stringify(data)}`);
+    return data;
+  }
+
+  // ── Load packages ────────────────────────────────────────────
+  async function loadPackages() {
+    setStatus('Loading packages...');
+    const pkgs = await httpJson('/packages/');
+    const sel  = document.getElementById('packageSelect');
+    sel.innerHTML = '';
+    pkgs.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.package_id;
+      opt.textContent = `${p.icon || ''} ${p.name}  (${p.budget_per_day} ₹/day, ${p.pace})`;
+      sel.appendChild(opt);
+    });
+    sel.addEventListener('change', () => updateBadges(pkgs));
+    updateBadges(pkgs);
+    setStatus(`✅ ${pkgs.length} packages loaded`, 'ok');
+    out(pkgs);
+  }
+
+  function updateBadges(pkgs) {
+    const id  = document.getElementById('packageSelect').value;
+    const pkg = pkgs.find(p => p.package_id === id);
+    const el  = document.getElementById('pkgBadges');
+    if (!pkg) { el.innerHTML = ''; return; }
+    el.innerHTML = (pkg.categories || []).map(c => `<span class="badge">${c}</span>`).join('')
+      + (pkg.activities || []).slice(0, 4).map(a => `<span class="badge" style="background:#e3f2fd;color:#1565c0">${a}</span>`).join('');
+  }
+
+  // ── Day constraints builder ──────────────────────────────────
+  let dayCount = 0;
+  function addDayConstraint() {
+    dayCount++;
+    const div = document.createElement('div');
+    div.style.cssText = 'border:1px solid #c5cae9;padding:10px;border-radius:8px;margin-top:8px;background:#f8f9ff';
+    div.innerHTML = `
+      <strong style="font-size:13px">Day ${dayCount}</strong>
+      <button onclick="this.parentElement.remove()" style="float:right;background:#ef5350;padding:2px 8px;font-size:12px">Remove</button>
+      <div class="row" style="margin-top:8px">
+        <div class="col"><label>Start time</label><input class="dc-start" value="09:00" style="min-width:90px"></div>
+        <div class="col"><label>End time</label><input class="dc-end" value="19:00" style="min-width:90px"></div>
+        <div class="col"><label>Pace</label>
+          <select class="dc-pace">
+            <option value="relaxed">relaxed</option>
+            <option value="normal" selected>normal</option>
+            <option value="packed">packed</option>
+          </select>
+        </div>
+        <div class="col"><label>Max budget (₹)</label><input class="dc-budget" type="number" placeholder="(unlimited)" style="min-width:110px"></div>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <div class="col" style="flex:1"><label>Fixed POI ids (comma sep.)</label><input class="dc-fixed" placeholder="tn-chn-001,tn-chn-002"></div>
+        <div class="col" style="flex:1"><label>Excluded POI ids (comma sep.)</label><input class="dc-excl" placeholder="tn-chn-010"></div>
+      </div>`;
+    div.dataset.dayNum = dayCount;
+    document.getElementById('dayConstraintsContainer').appendChild(div);
+  }
+
+  function collectDayConstraints() {
+    return Array.from(document.querySelectorAll('#dayConstraintsContainer > div')).map((el, i) => {
+      const budget = el.querySelector('.dc-budget').value;
+      const fixed  = el.querySelector('.dc-fixed').value.split(',').map(s=>s.trim()).filter(Boolean);
+      const excl   = el.querySelector('.dc-excl').value.split(',').map(s=>s.trim()).filter(Boolean);
+      return {
+        day_number:    i + 1,
+        start_time:    el.querySelector('.dc-start').value || '09:00',
+        end_time:      el.querySelector('.dc-end').value   || '19:00',
+        pace:          el.querySelector('.dc-pace').value,
+        max_budget:    budget ? parseFloat(budget) : null,
+        fixed_pois:    fixed,
+        excluded_pois: excl
+      };
+    });
+  }
+
+  // ── Generate structured plan ─────────────────────────────────
+  async function generatePlan() {
+    const package_id    = document.getElementById('packageSelect').value || 'pkg-heritage';
+    const city          = document.getElementById('city').value || 'Chennai';
+    const num_days      = parseInt(document.getElementById('numDays').value || '1', 10);
+    const budget_band   = document.getElementById('budgetBand').value;
+    const hotel_lat     = parseFloat(document.getElementById('hotelLat').value);
+    const hotel_lon     = parseFloat(document.getElementById('hotelLon').value);
+    const transport_mode = document.getElementById('transportMode').value || null;
+    const wheelchair    = document.getElementById('wheelchairOnly').value === 'true' ? true : null;
+    const maxFee        = document.getElementById('maxEntryFee').value;
+
+    const payload = {
+      package_id, city, num_days, budget_band, hotel_lat, hotel_lon,
+      overrides: {
+        transport_mode,
+        wheelchair_only: wheelchair,
+        max_entry_fee:   maxFee ? parseFloat(maxFee) : null
+      },
+      day_constraints: collectDayConstraints()
+    };
+
+    setStatus('⏳ Generating plan...');
+    const plan = await httpJson('/plan/generate', 'POST', payload);
+    setStatus(`✅ Done — ${plan.num_days} day(s), total ₹${plan.cost_summary?.grand_total ?? '?'}`, 'ok');
+    out(plan);
+  }
+
+  // ── Chat plan ────────────────────────────────────────────────
+  async function chatPlan() {
+    const message = document.getElementById('chatMsg').value;
+    const payload = { message, city: 'Chennai' };
+    setStatus('⏳ Sending to LLM...');
+    const plan = await httpJson('/plan/chat', 'POST', payload);
+    setStatus(`✅ Done — ${plan.num_days} day(s), total ₹${plan.cost_summary?.grand_total ?? '?'}`, 'ok');
+    out(plan);
+  }
+
+  // ── Event listeners ──────────────────────────────────────────
+  document.getElementById('btnLoadPkgs').addEventListener('click', () =>
+    loadPackages().catch(e => { setStatus('❌ ' + e.message, 'err'); out(e.message); }));
+
+  document.getElementById('btnGenerate').addEventListener('click', () =>
+    generatePlan().catch(e => { setStatus('❌ ' + e.message, 'err'); out(e.message); }));
+
+  document.getElementById('btnChat').addEventListener('click', () =>
+    chatPlan().catch(e => { setStatus('❌ ' + e.message, 'err'); out(e.message); }));
+
+  document.getElementById('btnAddDay').addEventListener('click', addDayConstraint);
+
+  // auto-load on open
+  loadPackages().catch(e => { setStatus('❌ ' + e.message, 'err'); out(e.message); });
+</script>
+</body>
+</html>
